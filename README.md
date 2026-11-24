@@ -40,8 +40,7 @@
 │   ├── 01_extract_tea.py      # 提取 + 清洗 + Haversine 竞品密度（四档半径）
 │   ├── 02_analysis.py         # Q1–Q7：分布、密度、评分、蓝海、街区、建议
 │   ├── 03_threshold_probe.py  # Q4b + Q8：阈值检验 + 伪重复识别（推翻 Q3）
-│   ├── 04_robustness.py       # Q9：半径敏感性 + bootstrap 排序稳定性
-│   └── archive_sim/           # 初版模拟数据脚本（学习记录，不参与结论）
+│   └── 04_robustness.py       # Q9：半径敏感性 + bootstrap 排序稳定性
 ├── charts/                    # 7 张图表（自动生成）
 ├── data/
 │   ├── yelp_business.parquet  # 原始商户数据（150,346 行）
