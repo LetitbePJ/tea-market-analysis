@@ -108,9 +108,9 @@
 - 所以呢：同一个检验流程，一个被推翻一个幸存，说明检验不是走过场
 - anti_pattern: 禁止把两个结论混成一句话；禁止重复用 q8 图
 
-### P10 蓝海候选池 11 城：Reno、Indianapolis、New Orleans 排序稳定 · hero/peak
+### P10 蓝海候选池 5 城：只讲候选池，不排座次 · hero/peak
 - 版式：图表 q5 气泡图占左 60%，右侧蓝海指数定义 + 前 3 名稳定性
-- 数字：11 城 / Reno 87% / NOLA 82%（bootstrap 1000 次）
+- 数字：5 城候选池 / Reno 92% / NOLA 80% / Indy 78%（整群 bootstrap 1000 次，区间重叠）
 - 所以呢：只能讲"候选池排名"，不能讲"第一名绝对最好"
 - anti_pattern: 禁止把bootstrap 概率写成确定结论
 
