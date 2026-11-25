@@ -19,8 +19,10 @@ import pandas as pd
 from scipy import stats
 import matplotlib.pyplot as plt
 
-plt.rcParams["font.sans-serif"] = ["SimHei"]
-plt.rcParams["axes.unicode_minus"] = False
+from plot_utils import setup_chinese_font
+from findings_io import write_group
+
+setup_chinese_font()
 
 bt = pd.read_csv("data/bubble_tea.csv")
 print(f"样本: {len(bt)} 家奶茶店")
@@ -106,28 +108,10 @@ extra_findings.append(
 for f in extra_findings:
     print(f)
 
-with open("findings.txt", "a", encoding="utf-8") as f:
-    f.write("\n".join(extra_findings) + "\n")
-
-
-def _dedupe_findings(prefixes=("[Q4b]", "[Q8]")):
-    """重复运行时避免同一结论被追加多次"""
-    try:
-        lines = open("findings.txt", encoding="utf-8").read().splitlines()
-    except FileNotFoundError:
-        return
-    kept, seen = [], set()
-    for ln in lines:
-        if ln.startswith(prefixes):
-            if ln in seen:
-                continue
-            seen.add(ln)
-        kept.append(ln)
-    open("findings.txt", "w", encoding="utf-8").write("\n".join(kept) + "\n")
-
-
-_dedupe_findings()
-print("\n补充结论已追加到 findings.txt")
+# 每组结论单独幂等覆盖（[Q4b]/[Q8] 各一组）
+for line in extra_findings:
+    write_group([line], group_prefix=line.split("]", 1)[0] + "]")
+print("\n补充结论已写入 findings.txt")
 
 # ============ 图表 ============
 fig, axes = plt.subplots(1, 3, figsize=(17, 5))

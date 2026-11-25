@@ -10,6 +10,8 @@
 import numpy as np
 import pandas as pd
 
+from geo_utils import haversine_matrix
+
 pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", 30)
 
@@ -49,15 +51,6 @@ tea["state"] = tea["state"].str.strip().str.upper()
 # ---------- 3. 特征构建: Haversine 竞品密度 ----------
 # 定义: 对每家奶茶店，统计同州其他奶茶店中距离 ≤1km / ≤3km 的数量。
 # 注: 1km ≈ 步行 10 分钟商圈, 3km ≈ 原项目定义的直接竞品商圈
-def haversine_matrix(lat1, lon1, lat2, lon2):
-    """向量化的 Haversine 球面距离（公里）"""
-    R = 6371.0
-    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-    return 2 * R * np.arcsin(np.sqrt(a))
-
 bt = tea[tea["is_bubble_tea"]].reset_index(drop=True)
 lat = bt["latitude"].to_numpy(dtype=float)
 lon = bt["longitude"].to_numpy(dtype=float)
