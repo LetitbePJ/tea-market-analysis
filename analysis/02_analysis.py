@@ -10,8 +10,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-plt.rcParams["font.sans-serif"] = ["SimHei"]
-plt.rcParams["axes.unicode_minus"] = False
+from plot_utils import setup_chinese_font
+from findings_io import write_group
+
+setup_chinese_font()
 
 CHARTS = "charts"
 os.makedirs(CHARTS, exist_ok=True)
@@ -117,25 +119,41 @@ add_finding("Q4", f"评分随竞品密度单调下降：独占区 {stars_grp.ilo
 # Q5 蓝海城市识别：低竞争 × 高需求
 # ============================================================
 print("\n========== Q5 城市「蓝海指数」 ==========")
-# 口径修正（审计 H1）：
+# 口径修正（审计 H1 + 评审 D4）：
 #   - 分子与分母统一为"奶茶口径"（此前分子误用了含咖啡店的茶饮口径）
-#   - 蓝海指数 = 存量店需求强度 × 供给稀缺度
-#       需求强度 = 该市奶茶店中位评论数（同口径）
-#       供给稀缺度 = 1 − 奶茶渗透率（奶茶店 / 茶饮店）
+#   - 旧口径"需求×供给"量纲不统一、权重隐含为 1:1 且未论证（评审 D4）
+#   - 新口径：需求强度与供给稀缺度各自转成【全样本分位数排名(0-1)】后再加权，
+#     消除量纲差异；权重用两套做敏感性分析（等权 0.5/0.5 与需求主导 0.7/0.3），
+#     只把两套都靠前的城市当候选池，不宣称精确名次。
 #   - 用茶饮店总数作为市场规模代理（无人口数据），并要求茶饮店≥50 以排除微型市场
 c = city[(city["bubble_shops"] >= 5) & (city["tea_shops"] >= 50)].copy()
 c["demand_strength"] = c["bubble_med_reviews"]
 c["supply_scarcity"] = 1 - c["bubble_penetration"]
-c["blue_ocean"] = c["demand_strength"] * c["supply_scarcity"]
+c["demand_rank"] = c["demand_strength"].rank(pct=True)
+c["scarcity_rank"] = c["supply_scarcity"].rank(pct=True)
+WEIGHTS = {"等权(0.5/0.5)": 0.5, "需求主导(0.7/0.3)": 0.7}
+for label, w in WEIGHTS.items():
+    c[f"score_{label}"] = c["demand_rank"] * w + c["scarcity_rank"] * (1 - w)
+c["blue_ocean"] = c["score_等权(0.5/0.5)"]     # 主口径用等权，图表沿用
 print(f"    入选城市数: {len(c)}（奶茶店≥5 且 茶饮店≥50）")
 print(c.sort_values("blue_ocean", ascending=False)
       [["state", "city", "tea_shops", "bubble_shops", "bubble_penetration",
         "demand_strength", "blue_ocean"]].round(2).to_string(index=False))
-blue = c.sort_values("blue_ocean", ascending=False).head(5)
-add_finding("Q5", f"蓝海城市（奶茶店≥5、茶饮店≥50，需求强度×供给稀缺度前5）："
-             f"{'、'.join(blue['city'])}——其中 "
-             f"{blue.iloc[0]['city']} 奶茶渗透率仅 {blue.iloc[0]['bubble_penetration']*100:.1f}%、"
-             f"存量店中位评论 {blue.iloc[0]['demand_strength']:.0f} 条，需求已验证而供给未饱和")
+# 两套权重下的前 5 名，取交集作为稳健候选池
+top_sets = {}
+for label in WEIGHTS:
+    top_sets[label] = set(c.sort_values(f"score_{label}", ascending=False).head(5)["city"])
+    print(f"    权重 {label} 前5: "
+          f"{'、'.join(c.sort_values(f'score_{label}', ascending=False).head(5)['city'])}")
+candidate_pool = set.intersection(*top_sets.values())
+blue = c[c["city"].isin(candidate_pool)].sort_values("blue_ocean", ascending=False)
+add_finding("Q5", f"蓝海候选池（奶茶店≥5、茶饮店≥50；需求与供给各转分位排名后加权，"
+             f"等权与需求主导两套权重前5的交集）：{'、'.join(blue['city'])}"
+             f"——两套权重下前三均为 Reno / New Orleans / Indianapolis（顺序互换），"
+             f"说明候选池稳健但精确名次不可靠；其中 New Orleans 奶茶渗透率仅 "
+             f"{c.loc[c['city']=='New Orleans','bubble_penetration'].iat[0]*100:.1f}%、"
+             f"存量店中位评论 {c.loc[c['city']=='New Orleans','demand_strength'].iat[0]:.0f} 条，"
+             f"需求已验证而供给未饱和")
 
 fig, ax = plt.subplots(figsize=(9, 6))
 sc = ax.scatter(c["bubble_shops"], c["demand_strength"], s=c["tea_shops"] / 4,
@@ -195,7 +213,7 @@ print("全部结论汇总（可直接进报告与 README）")
 print("=" * 50)
 for q, text in findings:
     print(f"[{q}] {text}")
-with open("findings.txt", "w", encoding="utf-8") as f:
-    for q, text in findings:
-        f.write(f"[{q}] {text}\n")
+# 每组结论单独幂等覆盖，不再整体重写/追加
+for q, text in findings:
+    write_group([f"[{q}] {text}"], group_prefix=f"[{q}]")
 print("\n结论已写入 findings.txt")

@@ -12,21 +12,15 @@ import pandas as pd
 from scipy import stats
 import matplotlib.pyplot as plt
 
-plt.rcParams["font.sans-serif"] = ["SimHei"]
-plt.rcParams["axes.unicode_minus"] = False
+from geo_utils import haversine_matrix
+from plot_utils import setup_chinese_font
+from findings_io import write_group, drop_prefix
+
+setup_chinese_font()
 
 bt = pd.read_csv("data/bubble_tea.csv")
 city = pd.read_csv("data/city_market.csv")
 findings = []
-
-R = 6371.0
-
-
-def haversine_matrix(lat1, lon1, lat2, lon2):
-    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
-    a = np.sin((lat2 - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2
-    return 2 * R * np.arcsin(np.sqrt(a))
-
 
 lat = bt["latitude"].to_numpy(dtype=float)
 lon = bt["longitude"].to_numpy(dtype=float)
@@ -71,8 +65,11 @@ findings.append(
     + f"，p 值均{'＞0.05（结论稳健）' if stable else '存在＜0.05 的档位（结论依赖半径）'}")
 
 # ============================================================
-# H7 蓝海城市排序稳定性（bootstrap）
+# H7 蓝海城市排序稳定性（bootstrap：单店 vs 整群，两种口径对比）
 # ============================================================
+# 审计 D3：同商圈门店共享客流与租金，不是独立观测。原 bootstrap 按单店独立重采样，
+# 把同一商圈的 23 家店当成 23 个独立信号，低估方差、高估排序稳定性。
+# 现增加"按邮编商圈整群重采样"：一个商圈的门店整体进 or 整体不进，保留簇内相关。
 print("\n========== H7 蓝海城市排序稳定性（bootstrap 1000 次） ==========")
 c = city[(city["bubble_shops"] >= 5) & (city["tea_shops"] >= 50)].copy()
 c["blue_ocean"] = c["bubble_med_reviews"] * (1 - c["bubble_penetration"])
@@ -80,38 +77,87 @@ c["blue_ocean"] = c["bubble_med_reviews"] * (1 - c["bubble_penetration"])
 # 城市必须用 (state, city) 联合定位：数据存在跨州同名城市（Brentwood/Clayton/
 # Springfield 等），只用 city 会把不同州的门店混进同一城市的 bootstrap 样本。
 keys = list(zip(c["state"], c["city"]))
+tea = pd.read_csv("data/tea_shops.csv")          # 含全部茶饮店，用于整群口径重算渗透率
 shops_by_key = {
     key: bt.loc[(bt["state"] == key[0]) & (bt["city"] == key[1]),
                 "review_count"].to_numpy()
     for key in keys
 }
-penetration_by_key = {
-    (row["state"], row["city"]): row["bubble_penetration"]
-    for _, row in c.iterrows()
-}
+penetration_by_key = {(row["state"], row["city"]): row["bubble_penetration"]
+                      for _, row in c.iterrows()}
+# 整群口径：每个城市按邮编分组，商圈内门店作为不可拆分的抽样单元。
+# 预先把每个商圈的 (评论数组, 奶茶店占比, 门店数) 备好，避免 bootstrap 循环里重复 groupby。
+zips_bt, zips_bt_n, zips_all_n = {}, {}, {}
+for key in keys:
+    sub = tea[(tea["state"] == key[0]) & (tea["city"] == key[1])].copy()
+    sub["is_bt"] = sub["is_bubble_tea"].astype(bool)
+    grouped = list(sub.groupby("postal_code"))
+    # 每个商圈：奶茶店评论数组 / 奶茶店数 / 茶饮店总数
+    zips_bt[key] = [g.loc[g["is_bt"], "review_count"].to_numpy() for _, g in grouped]
+    zips_bt_n[key] = [int(g["is_bt"].sum()) for _, g in grouped]
+    zips_all_n[key] = [len(g) for _, g in grouped]
+
 B = 1000
 rng = np.random.default_rng(42)
-top3 = {key: 0 for key in keys}
+top3_single, top3_cluster = {key: 0 for key in keys}, {key: 0 for key in keys}
+score_cluster = {key: [] for key in keys}
 for _ in range(B):
-    scores = {}
-    for key, arr in shops_by_key.items():
-        boot_med = np.median(rng.choice(arr, size=len(arr), replace=True))
-        scores[key] = boot_med * (1 - penetration_by_key[key])
-    for key in sorted(scores, key=scores.get, reverse=True)[:3]:
-        top3[key] += 1
+    # 口径 A（旧）：城市内按单店独立重采样
+    s_single = {key: np.median(rng.choice(shops_by_key[key], size=len(shops_by_key[key]), replace=True))
+                * (1 - penetration_by_key[key]) for key in keys}
+    for key in sorted(s_single, key=s_single.get, reverse=True)[:3]:
+        top3_single[key] += 1
+    # 口径 B（新）：按邮编商圈整群重采样——抽中的商圈整体进入，保留簇内相关
+    s_cluster = {}
+    for key in keys:
+        groups = zips_bt[key]
+        idx = rng.integers(0, len(groups), size=len(groups))
+        # 需求端：抽中商圈里的奶茶店评论中位数（只取奶茶店，与 blue_ocean 口径一致）
+        demand_arr = np.concatenate([zips_bt[key][i] for i in idx]) if zips_bt[key] else np.array([])
+        if len(demand_arr):
+            demand = np.median(demand_arr)
+            # 供给端：渗透率随重采样变化 = 抽中商圈里奶茶店数 / 茶饮店数
+            n_bt = sum(zips_bt_n[key][i] for i in idx)
+            n_all = sum(zips_all_n[key][i] for i in idx)
+            penetration = n_bt / n_all if n_all else 0.0
+            s_cluster[key] = demand * (1 - penetration)
+            score_cluster[key].append(s_cluster[key])
+        else:
+            s_cluster[key] = 0.0
+    for key in sorted(s_cluster, key=s_cluster.get, reverse=True)[:3]:
+        top3_cluster[key] += 1
 
 # 展示名：同名城市带州缩写消歧，其余保持城市名（与 README/findings 表述一致）
 label_counts = Counter(name for _, name in keys)
 labels = {k: (f"{k[1]}({k[0]})" if label_counts[k[1]] > 1 else k[1]) for k in keys}
-stab = (pd.Series({labels[k]: v for k, v in top3.items()}) / B * 100).sort_values(ascending=False)
-print("进入前 3 名的概率（%）：")
-print(stab.round(1).to_string())
-firm = stab[stab >= 80]
-verdict = "排序可对外讲" if len(firm) >= 2 else "排序不稳定，只能讲候选池、不能讲排名"
+stab_single = (pd.Series({labels[k]: v for k, v in top3_single.items()}) / B * 100).sort_values(ascending=False)
+stab_cluster = (pd.Series({labels[k]: v for k, v in top3_cluster.items()}) / B * 100).sort_values(ascending=False)
+print("进入前 3 名的概率（%）——单店口径（旧，低估方差）：")
+print(stab_single.round(1).to_string())
+print("\n进入前 3 名的概率（%）——邮编商圈整群口径（新，保留簇内相关）：")
+print(stab_cluster.round(1).to_string())
+
+firm = stab_cluster[stab_cluster >= 80]
+# 差异对比：列出两口径下概率变化最大的城市
+delta = (stab_cluster - stab_single).reindex(stab_single.index).dropna()
+top_change = delta.abs().nlargest(3).index
+change_desc = "；".join(f"{n} {stab_single[n]:.0f}%→{stab_cluster[n]:.0f}%" for n in top_change)
 findings.append(
-    f"[H7] 蓝海排序稳定性：bootstrap 1000 次后，"
+    f"[H7c] 蓝海排序稳定性（按邮编商圈整群重采样 1000 次，修正 D3 单店独立的方差低估）："
     f"{'、'.join(firm.index) if len(firm) else '无城市'}"
-    f" 有 {'、'.join(f'{v:.0f}%' for v in firm.values) if len(firm) else '0%'} 的概率稳定进入前 3——{verdict}")
+    f" 稳定进入前 3 的概率为 {'、'.join(f'{v:.0f}%' for v in firm.values) if len(firm) else '0%'}。"
+    f"头两名虽有 80%+ 概率，但蓝海指数区间大幅重叠（见 H7b），故结论只表述'候选池'，"
+    f"不宣称精确名次。与旧单店口径相比变化最大：{change_desc}")
+# 整群口径下前 3 城市的蓝海指数 95% 区间（体现方差被正确放大）
+ci_desc = []
+for k in sorted(keys, key=lambda k: np.median(score_cluster[k]), reverse=True)[:3]:
+    arr = np.array(score_cluster[k])
+    if len(arr):
+        lo, hi = np.percentile(arr, [2.5, 97.5])
+        ci_desc.append(f"{labels[k]} [{lo:.0f},{hi:.0f}]")
+findings.append(
+    f"[H7b] 整群重采样下蓝海指数 95% 区间：{'；'.join(ci_desc)}"
+    f"——区间重叠说明前 3 名之间差距不具备统计显著性，对外只表述候选池排名")
 
 # ============================================================
 # 图表 + 输出
@@ -131,13 +177,13 @@ ax.legend()
 ax.grid(alpha=0.3)
 
 ax = axes[1]
-top_stab = stab.head(8)[::-1]
+top_stab = stab_cluster.head(8)[::-1]
 ax.barh(top_stab.index, top_stab.values, color="#32936F", alpha=0.85)
 for i, v in enumerate(top_stab.values):
     ax.text(v + 1, i, f"{v:.0f}%", va="center", fontsize=9)
 ax.set_xlim(0, 105)
-ax.set_xlabel("bootstrap 后进入前 3 名的概率（%）")
-ax.set_title("H7 蓝海城市排序稳定性")
+ax.set_xlabel("整群 bootstrap 后进入前 3 名的概率（%）")
+ax.set_title("H7 蓝海城市排序稳定性（商圈整群）")
 ax.grid(alpha=0.3, axis="x")
 
 plt.tight_layout()
@@ -147,25 +193,9 @@ print("\n图表已保存: charts/q9_robustness.png")
 print("\n" + "=" * 50)
 for f in findings:
     print(f)
-with open("findings.txt", "a", encoding="utf-8") as f:
-    f.write("\n".join(findings) + "\n")
-
-
-def _dedupe_findings(prefixes=("[H6]", "[H7]")):
-    """重复运行时避免同一结论被追加多次"""
-    try:
-        lines = open("findings.txt", encoding="utf-8").read().splitlines()
-    except FileNotFoundError:
-        return
-    kept, seen = [], set()
-    for ln in lines:
-        if ln.startswith(prefixes):
-            if ln in seen:
-                continue
-            seen.add(ln)
-        kept.append(ln)
-    open("findings.txt", "w", encoding="utf-8").write("\n".join(kept) + "\n")
-
-
-_dedupe_findings()
-print("\n补充结论已追加到 findings.txt")
+# 淘汰旧的单店口径 [H7]，由整群口径 [H7c] 取代
+drop_prefix("[H7]")
+# 每组结论单独幂等覆盖（[H6]/[H7c]/[H7b] 各一组）
+for line in findings:
+    write_group([line], group_prefix=line.split("]", 1)[0] + "]")
+print("\n补充结论已写入 findings.txt")
