@@ -1,9 +1,10 @@
 """
 03_threshold_probe.py — 竞品密度是否存在阈值？细粒度曲线 + 稳健性检验 + 显著性检验
 背景：02_analysis.py 的 Q3 得到"竞品密度与热度正相关 r=0.19"，本脚本检验这个结论是否稳健。
-结论（本脚本跑出的结果）：不稳健——表面上的"集聚效应"完全由费城唐人街(19107)单一街区驱动。
-    剔除该街区后 r=0.02、分组差异不显著(p=0.76)，即：竞品密度本身不带来需求。
-    正确解释：竞品数量是"优质商圈"的症状，而非病因（高客流商圈同时吸引顾客与竞品）。
+结论（由本脚本计算后输出）：不稳健——表面上的"集聚效应"由单一街区驱动，
+    剔除该街区后相关系数与分组差异均不再支持"密度提升需求"。具体数值见运行输出，
+    不在代码中预先写死。正确解释：竞品数量是"优质商圈"的症状，而非病因（高客流商圈
+    同时吸引顾客与竞品）。
 
 方法：
   1. 逐密度点曲线（样本≥10 才纳入）
@@ -32,7 +33,11 @@ curve = (bt.groupby("competitors_1km")["review_count"]
          .rename(columns={"mean": "均评论", "median": "中位评论", "count": "门店数"}))
 curve = curve[curve["门店数"] >= 10]
 print(curve.round(1).to_string())
-print("→ 曲线不单调：0家 78 → 1家 63 → 2家 85 → 3-5家 73-76 → 7家 43 → 8家 112 → 22家 186")
+# 结论由 curve 动态生成：把每个密度点的均评论串成箭头链，再由相邻差值判断是否单调
+chain = " → ".join(f"{n}家 {v:.0f}" for n, v in zip(curve.index, curve["均评论"]))
+deltas = curve["均评论"].diff().dropna()
+monotone = (deltas >= 0).all() or (deltas <= 0).all()
+print(f"→ 曲线{'单调' if monotone else '不单调'}（样本≥10 的密度点）：{chain}")
 
 # ============ 2. 等样本四分位分箱 ============
 print("\n========== 2. 等样本四分位分箱 ==========")
@@ -47,7 +52,11 @@ print(f"门店数: {len(hi)}")
 print(f"城市: {hi['city'].value_counts().to_dict()}")
 print(f"邮编: {hi['postal_code'].value_counts().to_dict()}")
 print(f"均评论: {hi['review_count'].mean():.0f}（全样本均值 {bt['review_count'].mean():.0f}）")
-print("→ 23 家店全部位于费城唐人街 19107：它们是同一个商圈的同批门店，不是 23 个独立观测")
+# 簇的归属由数据反推，不写死"费城唐人街 19107 / 23 家"
+hi_city = hi["city"].mode().iat[0] if len(hi) else "N/A"
+hi_zip = hi["postal_code"].mode().iat[0] if len(hi) else "N/A"
+print(f"→ {len(hi)} 家店集中于 {hi_city} 邮编 {hi_zip}："
+      f"它们是同一个商圈的同批门店，不是 {len(hi)} 个独立观测")
 
 # ============ 4. 剔除超级簇后重算 ============
 print("\n========== 4. 剔除唐人街簇后的稳健性检验 ==========")
@@ -141,15 +150,15 @@ ax.set_title(f"剔除唐人街簇后：差异消失（p={p2:.2f}）")
 ax.grid(alpha=0.3, axis="y")
 
 ax = axes[2]
-bars = ax.bar(["唐人街 19107\n(n=23)", "费城其他\n(n=74)"],
+bars = ax.bar([f"唐人街 {hi_zip}\n(n={len(cluster)})", f"费城其他\n(n={len(others)})"],
               [cluster["review_count"].mean(), others["review_count"].mean()],
               color=["#E94B3C", "#A4A4A4"], alpha=0.85)
 for b in bars:
     ax.text(b.get_x() + b.get_width() / 2, b.get_height(), f"{b.get_height():.0f}", ha="center")
 ax.set_ylabel("平均累计评论数")
-ax.set_title(f"费城内对照（p<0.001）\n高密度是这 1 个街区的特征")
+ax.set_title(f"费城内对照（p={p_mw:.4f}）\n高密度集中在这 1 个街区")
 ax.grid(alpha=0.3, axis="y")
 
 plt.tight_layout()
 plt.savefig("charts/q8_threshold.png", dpi=150, bbox_inches="tight")
-print("图表已保存: chartss/q8_threshold.png".replace("chartss", "charts"))
+print("图表已保存: charts/q8_threshold.png")

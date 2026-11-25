@@ -84,8 +84,8 @@ grp = bt.groupby("密度分组", observed=True)["review_count"].agg(["mean", "me
 print(grp.round(1).to_string())
 add_finding("Q3", f"竞品密度与门店热度 r={r:.2f}（{'正相关' if r > 0.05 else '负相关' if r < -0.05 else '基本无关'}）；"
              f"热度最高的是「{grp['mean'].idxmax()}」组（均评论 {grp['mean'].max():.0f} 条）"
-             f"——⚠️ 该结论经 03_threshold_probe.py 稳健性检验后被推翻：正相关完全由费城唐人街单一街区"
-             f"（23 家店，伪重复）驱动，剔除后 r=0.02、p=0.76。竞品数量是优质商圈的症状而非病因")
+             f"——⚠️ 该结论为截面初值，须经 03_threshold_probe.py 做伪重复与稳健性检验后方可采信；"
+             f"检验结果以 findings.txt 中 [Q8] 条目为准（脚本不预先写死推翻后的数值）")
 
 fig, ax = plt.subplots(figsize=(9, 5))
 means = grp["mean"].values
