@@ -8,3 +8,6 @@ Thumbs.db
 .venv/
 venv/
 _备份pptx/
+
+# Yelp Open Dataset 及派生表：受许可条款约束，不进入版本库
+data/

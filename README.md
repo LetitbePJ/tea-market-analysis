@@ -13,6 +13,7 @@
 ## 二、数据说明
 
 - **数据来源**：[Yelp Open Dataset](https://www.yelp.com/dataset)（官方开放数据集），商户子集 **150,346 家**
+- **数据不随仓库分发（重要）**：Yelp 数据集使用条款禁止再分发原始数据及其派生作品，因此本仓库 **不含任何数据文件**。请自行到官网申请下载，按下方「数据准备」放置后即可运行全部脚本。
 - **覆盖范围（重要）**：该数据集对应 Yelp 的 **8 个都市圈、15 个州/省**（含加拿大 AB），因此结论仅适用于"Yelp 覆盖市场"，不能推广为全北美或全国结论
 - **提取口径**：categories 含 `Bubble Tea` / `Coffee & Tea` / `Tea Rooms` → **7,069 家茶饮门店**，其中奶茶店 **477 家**（已核验：Boba / Milk Tea 等拼写变体无遗漏）
 - **字段**：business_id、城市、州、邮编、类别、经纬度、星级评分、累计评论数
@@ -42,11 +43,11 @@
 │   ├── 03_threshold_probe.py  # Q4b + Q8：阈值检验 + 伪重复识别（推翻 Q3）
 │   └── 04_robustness.py       # Q9：半径敏感性 + bootstrap 排序稳定性
 ├── charts/                    # 7 张图表（自动生成）
-├── data/
-│   ├── yelp_business.parquet  # 原始商户数据（150,346 行）
-│   ├── tea_shops.csv          # 茶饮门店表
-│   ├── bubble_tea.csv         # 奶茶店表（含 0.5/1/2/3km 竞品密度）
-│   └── city_market.csv        # 城市-州级市场表（含奶茶渗透率）
+├── data/                          # 【本地目录，不进版本库】见第五节数据准备
+│   ├── yelp_business.parquet  # 原始商户数据（150,346 行，需自行下载）
+│   ├── tea_shops.csv          # 茶饮门店表（由 01 脚本生成）
+│   ├── bubble_tea.csv         # 奶茶店表（含 0.5/1/2/3km 竞品密度，由 01 生成）
+│   └── city_market.csv        # 城市-州级市场表（由 01 生成）
 ├── findings.txt               # 结论汇总（脚本自动生成）
 ├── 项目逻辑审计.md             # 逻辑漏洞自查与修复记录
 ├── 面试拷打手册.md             # 高频追问预案
@@ -54,11 +55,41 @@
 └── README.md
 ```
 
-## 五、运行环境
+## 五、运行环境与数据准备
 
-- Python 3.11，依赖见 `requirements.txt`：`pip install -r requirements.txt`
-- 运行顺序：`01_extract_tea.py` → `02_analysis.py` → `03_threshold_probe.py` → `04_robustness.py`
-- 全部脚本可重复运行（幂等），工作目录需为项目根目录
+**1. 安装依赖**
+
+```bash
+pip install -r requirements.txt
+```
+
+依赖：`pandas>=2.0`、`numpy>=1.24`、`scipy>=1.10`、`matplotlib>=3.7`、`pyarrow>=12.0`（最后一项仅用于读取 parquet）。Python 3.11 验证通过。
+
+**2. 准备数据（仓库不含数据，需自行获取）**
+
+1. 到 [Yelp Open Dataset](https://www.yelp.com/dataset) 官网注册并申请下载数据集；按条款，数据仅限学术/非商业用途，不可再分发。
+2. 从下载包中取出商户表（`business.json`，或转换成 parquet 后的 `yelp_business.parquet`），只保留本分析所需字段即可。
+3. 在项目根目录新建 `data/` 目录，把商户表放进去：
+
+```
+tea-market-analysis/
+└── data/
+    └── yelp_business.parquet    # ← 放这里（150,346 行商户子集）
+```
+
+4. 运行 `analysis/01_extract_tea.py`，它会自动生成 `tea_shops.csv`、`bubble_tea.csv`、`city_market.csv` 三张派生表到同一目录。
+
+**3. 运行分析**
+
+```bash
+cd analysis
+python 01_extract_tea.py        # 提取 + Haversine 竞品密度特征
+python 02_analysis.py           # Q1–Q7 主分析
+python 03_threshold_probe.py    # Q4b / Q8：阈值与伪重复检验
+python 04_robustness.py         # Q9：半径敏感性 + bootstrap
+```
+
+全部脚本可重复运行（幂等），工作目录需为项目根目录。`data/` 目录已被 `.gitignore` 忽略，个人数据不会被误提交。
 
 ## 六、局限与改进方向
 
